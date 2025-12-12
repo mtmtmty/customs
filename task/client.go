@@ -4,6 +4,7 @@ import (
 	"context"
 	"customs/task/payload" // 替换为你的模块名
 	"github.com/hibiken/asynq"
+	"time"
 )
 
 // Client 异步任务生产者客户端
@@ -29,10 +30,10 @@ func (c *Client) CreateDFTask(ctx context.Context, resourceComment, excelName, t
 	}
 	// 入队任务（可配置超时、重试策略）
 	return c.asynqClient.EnqueueContext(ctx, task,
-		asynq.MaxRetry(3),    // 失败重试3次
-		asynq.Timeout(5*60),  // 超时5分钟
-		asynq.Queue("excel"), // 指定队列（可选，用于任务优先级）
-	), nil
+		asynq.MaxRetry(3),               // 失败重试3次
+		asynq.Timeout(5*60*time.Second), // 超时5分钟
+		asynq.Queue("excel"),            // 指定队列（可选，用于任务优先级）
+	)
 }
 
 // InsertDFTask 生产“数据入库”任务
@@ -43,9 +44,9 @@ func (c *Client) InsertDFTask(ctx context.Context, dbCSV, dictCSV, taskID string
 	}
 	return c.asynqClient.EnqueueContext(ctx, task,
 		asynq.MaxRetry(3),
-		asynq.Timeout(10*60),
+		asynq.Timeout(10*60*time.Second),
 		asynq.Queue("db"),
-	), nil
+	)
 }
 
 // Close 关闭客户端

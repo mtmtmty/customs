@@ -4,6 +4,7 @@ import (
 	"customs/api/response"
 	"customs/service"
 	"github.com/gin-gonic/gin"
+	"strconv"
 )
 
 // DataDictionaryHandler 数据字典接口处理器
@@ -16,7 +17,7 @@ func NewDataDictionaryHandler(svc *service.DataDictionaryService) *DataDictionar
 	return &DataDictionaryHandler{svc: svc}
 }
 
-// -------------------------- 1. 上传Excel接口 --------------------------
+// UploadExcel 上传Excel
 // @Summary 上传Excel文件并触发解析
 // @Description 上传Excel文件，关联资源备注，生产解析异步任务
 // @Tags 数据字典
@@ -52,7 +53,7 @@ func (h *DataDictionaryHandler) UploadExcel(c *gin.Context) {
 	response.Success(c, dictTask)
 }
 
-// -------------------------- 2. 查询解析结果接口 --------------------------
+// GetParseResult 查询解析结果接口
 // @Summary 查询Excel解析结果
 // @Description 根据任务ID查询解析结果（缓存/任务状态）
 // @Tags 数据字典
@@ -68,24 +69,37 @@ func (h *DataDictionaryHandler) GetParseResult(c *gin.Context) {
 		response.Fail(c, response.ErrCodeInvalidParam, "任务ID不能为空")
 		return
 	}
-	page := c.DefaultQuery("page", "1")
-	size := c.DefaultQuery("size", "10")
-	// 转换分页参数为int（简化，实际需校验）
-	pageInt := 1
-	sizeInt := 10
 
-	// 步骤2：调用Service层方法
+	// 步骤2：获取分页参数并转换为int（解决未使用变量问题）
+	pageStr := c.DefaultQuery("page", "1")  // 默认页码1
+	sizeStr := c.DefaultQuery("size", "10") // 默认每页10条
+
+	// 转换page为int，并校验合法性
+	pageInt, err := strconv.Atoi(pageStr)
+	if err != nil || pageInt < 1 {
+		response.Fail(c, response.ErrCodeInvalidParam, "页码必须为正整数")
+		return
+	}
+
+	// 转换size为int，并校验合法性（限制最大条数，避免查询过多数据）
+	sizeInt, err := strconv.Atoi(sizeStr)
+	if err != nil || sizeInt < 1 || sizeInt > 100 {
+		response.Fail(c, response.ErrCodeInvalidParam, "每页条数必须为1-100的整数")
+		return
+	}
+
+	// 步骤3：调用Service层方法（使用转换后的pageInt和sizeInt）
 	result, err := h.svc.GetParseResult(c.Request.Context(), taskID, pageInt, sizeInt)
 	if err != nil {
 		response.Fail(c, response.ErrCodeBusinessError, err.Error())
 		return
 	}
 
-	// 步骤3：返回成功响应
+	// 步骤4：返回成功响应
 	response.Success(c, result)
 }
 
-// -------------------------- 3. 确认入库接口 --------------------------
+// ConfirmInsert 确认入库接口
 // @Summary 确认/取消Excel解析结果入库
 // @Description 根据任务ID确认入库，生产入库异步任务
 // @Tags 数据字典
@@ -113,7 +127,7 @@ func (h *DataDictionaryHandler) ConfirmInsert(c *gin.Context) {
 	response.Success(c, gin.H{"msg": "操作成功"})
 }
 
-// -------------------------- 4. 查询资源备注接口 --------------------------
+// GetResourceComments 查询资源备注接口
 // @Summary 查询所有资源备注
 // @Description 获取去重的资源备注列表
 // @Tags 数据字典

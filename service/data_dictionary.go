@@ -2,12 +2,15 @@ package service
 
 import (
 	"context"
+	"customs/common/errno"
 	"customs/infrastructure/minio"
 	"customs/infrastructure/redis"
 	"customs/model"
 	"customs/repository"
 	"customs/task"
+	"fmt"
 	"mime/multipart"
+	"path/filepath"
 )
 
 // DataDictionaryService 数据字典核心业务服务
@@ -39,7 +42,7 @@ func NewDataDictionaryService(
 	}
 }
 
-// -------------------------- 1. 上传Excel（对应provider.py的upload_excel_file） --------------------------
+// UploadExcel 上传Excel
 func (s *DataDictionaryService) UploadExcel(
 	ctx context.Context,
 	resourceComment string, // 资源备注
@@ -58,7 +61,12 @@ func (s *DataDictionaryService) UploadExcel(
 	if err != nil {
 		return nil, errno.ErrFileOpenFailed // 自定义错误码：文件打开失败
 	}
-	defer src.Close()
+	defer func(src multipart.File) {
+		err := src.Close()
+		if err != nil {
+
+		}
+	}(src)
 	// 上传到MinIO的excel-bucket，文件名用原文件名（也可加前缀避免重复）
 	err = s.minioClient.UploadFile("excel-bucket", file.Filename, src, file.Size)
 	if err != nil {
@@ -76,12 +84,15 @@ func (s *DataDictionaryService) UploadExcel(
 	if err != nil {
 		// 任务生产失败，更新数据库状态
 		dictTask.UpdateCreateDFStatus(model.TaskStatusFailed, "生产解析任务失败："+err.Error())
-		s.dictRepo.Update(ctx, dictTask)
+		err := s.dictRepo.Update(ctx, dictTask)
+		if err != nil {
+			return nil, err
+		}
 		return nil, errno.ErrTaskCreateFailed // 自定义错误码：任务创建失败
 	}
 
 	// 步骤4：更新任务记录的create_df_task_id
-	dictTask.CreateDFTaskID = taskInfo.TaskID
+	dictTask.CreateDFTaskID = taskInfo.ID
 	dictTask.UpdateCreateDFStatus(model.TaskStatusPending) // 状态改为待执行
 	if err := s.dictRepo.Update(ctx, dictTask); err != nil {
 		return nil, errno.ErrDBUpdateFailed // 自定义错误码：数据库更新失败
@@ -90,41 +101,34 @@ func (s *DataDictionaryService) UploadExcel(
 	return dictTask, nil
 }
 
-// -------------------------- 2. 查询解析结果（对应provider.py的get_df） --------------------------
-func (s *DataDictionaryService) GetParseResult(
-	ctx context.Context,
-	dictTaskID string, // 字典任务ID
-	page, size int, // 分页参数
-) (interface{}, error) {
-	// 步骤1：查询数据库任务记录
-	dictTask, err := s.dictRepo.GetByID(ctx, dictTaskID)
+// GetParseResult 查询解析结果
+func (s *DataDictionaryService) GetParseResult(ctx context.Context, taskID string, page, size int) (interface{}, error) {
+	// 步骤1：查询任务记录
+	dictTask, err := s.dictRepo.GetByID(ctx, taskID)
 	if err != nil {
-		return nil, errno.ErrDBQueryFailed // 自定义错误码：数据库查询失败
+		return nil, fmt.Errorf("任务不存在：%w", err)
 	}
 
-	// 步骤2：先查Redis缓存（解析后的Excel结果）
-	redisKey := "dict_task_" + dictTask.CreateDFTaskID
-	cachedResult, err := s.redisClient.Get(redisKey)
-	if err == nil && cachedResult != "" {
-		// 缓存命中，分页返回结果（分页逻辑可抽入common/utils）
-		return paginateResult(cachedResult, page, size), nil
+	// 步骤2：只检查「解析状态是否成功」（关键修改：去掉对confirm的判定）
+	if dictTask.CreateDFTaskStatus != model.TaskStatusSucceeded {
+		return nil, fmt.Errorf("任务解析未完成，当前状态：%s", dictTask.CreateDFTaskStatus)
 	}
 
-	// 步骤3：缓存未命中，查询任务状态
-	taskStatus, err := s.taskInspector.GetTaskStatus(ctx, dictTask.CreateDFTaskID)
+	// 步骤3：读取Redis缓存
+	redisKey := "dict_task_" + taskID
+	result, err := s.redisClient.Get(redisKey)
 	if err != nil {
-		return nil, errno.ErrTaskQueryFailed // 自定义错误码：任务状态查询失败
+		return nil, fmt.Errorf("缓存中无解析结果：%w", err)
 	}
 
-	// 返回任务状态（供前端展示：待执行/执行中/失败）
-	return map[string]string{
-		"task_id":    dictTask.ID,
-		"status":     taskStatus,
-		"excel_name": dictTask.ExcelName,
+	return map[string]interface{}{
+		"result": result,
+		"page":   page,
+		"size":   size,
 	}, nil
 }
 
-// -------------------------- 3. 确认入库（对应provider.py的insert_df） --------------------------
+// ConfirmInsert 确认入库
 func (s *DataDictionaryService) ConfirmInsert(
 	ctx context.Context,
 	dictTaskID string,
@@ -170,7 +174,7 @@ func (s *DataDictionaryService) ConfirmInsert(
 	return nil
 }
 
-// -------------------------- 4. 查询资源备注（对应provider.py的get_resource_comment） --------------------------
+// GetResourceComments 查询资源备注
 func (s *DataDictionaryService) GetResourceComments(ctx context.Context) ([]string, error) {
 	// 调用Repository查询去重的资源备注
 	comments, err := s.dbResRepo.GetDistinctResourceComment(ctx)
@@ -180,11 +184,9 @@ func (s *DataDictionaryService) GetResourceComments(ctx context.Context) ([]stri
 	return comments, nil
 }
 
-// -------------------------- 辅助函数（可抽入common/utils） --------------------------
 // isExcelFile 判断是否为Excel文件
 func isExcelFile(filename string) bool {
-	// 简单判断后缀：.xlsx/.xls
-	ext := filename[len(filename)-4:]
+	ext := filepath.Ext(filename)
 	return ext == ".xlsx" || ext == ".xls"
 }
 

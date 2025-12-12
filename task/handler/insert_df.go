@@ -7,6 +7,7 @@ import (
 	"customs/repository"
 	"customs/task/payload"
 	"github.com/hibiken/asynq"
+	"time"
 )
 
 // InsertDFHandler 数据入库任务的消费逻辑
@@ -17,6 +18,8 @@ func InsertDFHandler(
 	dictRepo *repository.DictionaryRepository,
 	dbResRepo *repository.DBResourceRepository,
 ) error {
+	ctx, cancel := context.WithTimeout(ctx, 590*time.Second)
+	defer cancel()
 	// 1. 解析任务参数
 	p, err := payload.ParseInsertDFPayload(task)
 	if err != nil {
@@ -24,14 +27,14 @@ func InsertDFHandler(
 	}
 
 	// 2. 从MinIO下载CSV文件
-	dbCSVFile, err := minioClient.DownloadFile("csv-bucket", p.DBResourceCSVName)
+	_, err = minioClient.DownloadFile("csv-bucket", p.DBResourceCSVName)
 	if err != nil {
 		dictTask, _ := dictRepo.GetByID(ctx, p.TaskID)
 		dictTask.UpdateInsertDFStatus(model.TaskStatusFailed, "下载DB CSV失败: "+err.Error())
 		dictRepo.Update(ctx, dictTask)
 		return err
 	}
-	dictCSVFile, err := minioClient.DownloadFile("csv-bucket", p.DataDictionaryCSVName)
+	_, err = minioClient.DownloadFile("csv-bucket", p.DataDictionaryCSVName)
 	if err != nil {
 		dictTask, _ := dictRepo.GetByID(ctx, p.TaskID)
 		dictTask.UpdateInsertDFStatus(model.TaskStatusFailed, "下载Dict CSV失败: "+err.Error())

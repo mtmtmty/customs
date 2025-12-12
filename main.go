@@ -13,11 +13,11 @@ import (
 
 func main() {
 	// 1. 初始化基础设施层
-	mysqlClient, err := db.NewMySQLClient("user:pass@tcp(127.0.0.1:3306)/dbname?charset=utf8mb4")
+	mysqlClient, err := db.NewMySQLClient("root:123456@tcp(127.0.0.1:3306)/customs?parseTime=true&charset=utf8mb4")
 	if err != nil {
 		log.Fatal("MySQL初始化失败:", err)
 	}
-	minioClient, err := minio.NewMinioClient("127.0.0.1:9000", "AK", "SK", false)
+	minioClient, err := minio.NewMinioClient("127.0.0.1:9000", "minioadmin", "minioadmin", false)
 	if err != nil {
 		log.Fatal("MinIO初始化失败:", err)
 	}

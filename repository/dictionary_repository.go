@@ -16,7 +16,6 @@ func NewDictionaryRepository(mysqlClient *db.MySQLClient) *DictionaryRepository 
 	return &DictionaryRepository{mysqlClient: mysqlClient}
 }
 
-// -------------------------- 基础 CRUD --------------------------
 // Create 创建任务记录（对应 Python 的 add+commit）
 func (r *DictionaryRepository) Create(ctx context.Context, task *model.DictionaryTask) error {
 	return r.mysqlClient.GetDB().WithContext(ctx).Create(task).Error
@@ -34,7 +33,6 @@ func (r *DictionaryRepository) Update(ctx context.Context, task *model.Dictionar
 	return r.mysqlClient.GetDB().WithContext(ctx).Save(task).Error
 }
 
-// -------------------------- 业务专属查询 --------------------------
 // GetByCreateDFTaskID 根据 create_df_task_id 查询任务（关联 Asynq 任务）
 func (r *DictionaryRepository) GetByCreateDFTaskID(ctx context.Context, taskID string) (*model.DictionaryTask, error) {
 	var task model.DictionaryTask

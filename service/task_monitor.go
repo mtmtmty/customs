@@ -21,7 +21,7 @@ func (s *DataDictionaryService) MonitorInsertTask(ctx context.Context, dictTaskI
 		}
 
 		// 步骤2：查询Asynq任务状态
-		taskStatus, err := s.taskInspector.GetTaskStatus(ctx, dictTask.InsertDFTaskID)
+		taskStatus, err := s.taskInspector.GetTaskStatus(dictTask.InsertDFTaskID)
 		if err != nil {
 			time.Sleep(10 * time.Second)
 			continue

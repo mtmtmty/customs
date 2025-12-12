@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"customs/infrastructure/db"
 	"customs/infrastructure/minio"
 	"customs/infrastructure/redis"
@@ -12,15 +13,22 @@ import (
 
 func main() {
 	// 初始化依赖
-	mysqlClient, _ := db.NewMySQLClient("user:pass@tcp(127.0.0.1:3306)/dbname?charset=utf8mb4")
-	minioClient, _ := minio.NewMinioClient("127.0.0.1:9000", "AK", "SK", false)
+	mysqlClient, _ := db.NewMySQLClient("root:123456@tcp(127.0.0.1:3306)/customs?parseTime=true&charset=utf8mb4")
+	minioClient, _ := minio.NewMinioClient("127.0.0.1:9000", "minioadmin", "minioadmin", false)
 	redisClient := redis.NewRedisClient("127.0.0.1:6379", "", 0)
 	repoContainer := repository.NewRepositoryContainer(mysqlClient)
 
 	// 初始化Asynq Worker
-	worker := asynq.NewWorker(
+	worker := asynq.NewServer(
 		asynq.RedisClientOpt{Addr: "127.0.0.1:6379", Password: "", DB: 0},
-		asynq.Config{Concurrency: 5}, // 并发数5
+		asynq.Config{
+			Concurrency: 5,
+			Queues: map[string]int{
+				"excel":   10,
+				"db":      5,
+				"default": 3,
+			},
+		},
 	)
 
 	// 注册任务处理器

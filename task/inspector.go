@@ -1,55 +1,62 @@
 package task
 
 import (
-	"context"
 	"customs/model"
+	"errors"
 	"github.com/hibiken/asynq"
+	"strconv"
 )
 
-// Inspector 任务状态查询器（完整实现）
+// Inspector 任务状态查询器
 type Inspector struct {
 	inspector *asynq.Inspector
 }
 
-// NewInspector 初始化查询器（复用Redis配置）
+// NewInspector 初始化查询器
 func NewInspector(redisAddr, redisPassword string, redisDB int) *Inspector {
-	// 创建Asynq Inspector实例（底层依赖Redis）
-	inspector := asynq.NewInspector(asynq.RedisClientOpt{
-		Addr:     redisAddr,
-		Password: redisPassword,
-		DB:       redisDB,
-	})
-	return &Inspector{inspector: inspector}
+	return &Inspector{
+		inspector: asynq.NewInspector(asynq.RedisClientOpt{
+			Addr:     redisAddr,
+			Password: redisPassword,
+			DB:       redisDB,
+		}),
+	}
 }
 
-// GetTaskStatus 查询任务状态（转换为Model层的统一状态常量）
-func (i *Inspector) GetTaskStatus(ctx context.Context, taskID string) (string, error) {
-	// 调用Asynq Inspector获取任务详情
-	info, err := i.inspector.GetTaskInfo(ctx, taskID)
+// GetTaskStatus 查询任务状态（适配 v0.24.0）
+func (i *Inspector) GetTaskStatus(taskID string) (string, error) {
+	// 旧版本需要队列名称，通常使用 "default"
+	queue := "default"
+
+	// 旧版本 API：GetTaskInfo(queue, taskID string)
+	info, err := i.inspector.GetTaskInfo(queue, taskID)
 	if err != nil {
-		// 区分“任务不存在”和“查询失败”
-		if asynq.IsTaskNotFoundError(err) {
-			return model.TaskStatusFailed, nil // 任务不存在视为失败
+		// 旧版本没有 IsErrTaskNotFound，需要手动判断
+		if errors.Is(err, asynq.ErrTaskNotFound) {
+			return model.TaskStatusFailed, nil
 		}
-		return "", err // 其他错误直接返回
+		return "", err
 	}
 
-	// 将Asynq的State转换为Model层定义的状态常量（统一语义）
+	// v0.24.0 中的状态常量命名（与新版本一致，但需确保导入正确）
 	switch info.State {
-	case asynq.StatePending:
+	case asynq.TaskStatePending:
 		return model.TaskStatusPending, nil
-	case asynq.StateProcessing:
+	case asynq.TaskStateActive:
 		return model.TaskStatusRunning, nil
-	case asynq.StateSucceeded:
+	case asynq.TaskStateCompleted:
 		return model.TaskStatusSucceeded, nil
-	case asynq.StateFailed:
-		return model.TaskStatusFailed, nil
+	case asynq.TaskStateArchived:
+		if info.CompletedAt.IsZero() {
+			return model.TaskStatusFailed, nil
+		}
+		return model.TaskStatusSucceeded, nil
 	default:
-		return string(info.State), nil // 未知状态返回原始值
+		return strconv.Itoa(int(info.State)), nil
 	}
 }
 
-// Close 关闭Inspector（可选，优雅退出）
+// Close 关闭Inspector
 func (i *Inspector) Close() error {
 	return i.inspector.Close()
 }

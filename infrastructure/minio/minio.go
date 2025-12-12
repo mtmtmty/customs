@@ -2,6 +2,7 @@ package minio
 
 import (
 	"context"
+	"github.com/minio/minio-go/v7"
 	"github.com/minio/minio-go/v7/pkg/credentials"
 	"io"
 )
@@ -24,7 +25,7 @@ func NewMinioClient(endpoint, accessKey, secretKey string, secure bool) (*Client
 
 	// 测试连接
 	ctx := context.Background()
-	if err := client.ListBuckets(ctx); err != nil {
+	if _, err := client.ListBuckets(ctx); err != nil {
 		return nil, err
 	}
 

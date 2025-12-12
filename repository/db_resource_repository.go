@@ -26,7 +26,6 @@ func (r *DBResourceRepository) GetDistinctResourceComment(ctx context.Context) (
 	return comments, err
 }
 
-// 可选：其他基础 CRUD
 func (r *DBResourceRepository) Create(ctx context.Context, resource *model.DBResource) error {
 	return r.mysqlClient.GetDB().WithContext(ctx).Create(resource).Error
 }
