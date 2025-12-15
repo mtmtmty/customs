@@ -17,12 +17,13 @@ func NewRouter(serviceContainer *service.ServiceContainer) *gin.Engine {
 
 	apiGroup := r.Group("/api")
 	{
-		dictGroup := apiGroup.Group("/dict")
+		dictGroup := apiGroup.Group("/data_dictionary")
 		{
-			dictGroup.POST("/upload", ddHandler.UploadExcel)          // 上传Excel
-			dictGroup.GET("/result", ddHandler.GetParseResult)        // 查询解析结果
-			dictGroup.POST("/confirm", ddHandler.ConfirmInsert)       // 确认入库
-			dictGroup.GET("/comments", ddHandler.GetResourceComments) // 查询资源备注
+			dictGroup.GET("/insert", ddHandler.DownloadTemplate)              // 下载模版文件
+			dictGroup.POST("/insert", ddHandler.UploadExcel)                  // 上传Excel
+			dictGroup.GET("/insert/data", ddHandler.GetParseResult)           // 查询解析结果
+			dictGroup.POST("/insert/{id}", ddHandler.ConfirmInsert)           // 确认入库
+			dictGroup.GET("/resource_comment", ddHandler.GetResourceComments) // 查询资源备注
 		}
 
 		apiGroup.GET("/health", func(c *gin.Context) {

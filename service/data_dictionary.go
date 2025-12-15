@@ -2,13 +2,16 @@ package service
 
 import (
 	"context"
+	"customs/common"
 	"customs/common/errno"
 	"customs/infrastructure/minio"
 	"customs/infrastructure/redis"
 	"customs/model"
 	"customs/repository"
 	"customs/task"
+	"encoding/json"
 	"fmt"
+	"io"
 	"mime/multipart"
 	"path/filepath"
 )
@@ -40,6 +43,19 @@ func NewDataDictionaryService(
 		dictRepo:      dictRepo,
 		dbResRepo:     dbResRepo,
 	}
+}
+
+// DownloadTemplate 从MinIO获取Excel模板文件
+func (s *DataDictionaryService) DownloadTemplate(ctx context.Context) (io.Reader, string, error) {
+	templateName := "system-db.xls" // 模板文件名，与Python原逻辑保持一致
+
+	// 从MinIO下载模板文件
+	fileBytes, err := s.minioClient.DownloadFile("excel-bucket", templateName)
+	if err != nil {
+		return nil, "", fmt.Errorf("minio下载失败：%w", err)
+	}
+
+	return fileBytes, templateName, nil
 }
 
 // UploadExcel 上传Excel
@@ -190,14 +206,37 @@ func isExcelFile(filename string) bool {
 	return ext == ".xlsx" || ext == ".xls"
 }
 
-// paginateResult 分页处理JSON字符串（示例逻辑，可根据实际调整）
-func paginateResult(jsonStr string, page, size int) interface{} {
-	// 实际场景：解析JSON为数组，按page/size截取
-	// 这里简化返回，仅标记分页信息
-	return map[string]interface{}{
-		"data":  jsonStr,
-		"page":  page,
-		"size":  size,
-		"total": 100, // 示例总数
+// paginateResult 分页处理JSON字符串
+func paginateResult(jsonStr string, page, size int) (interface{}, error) {
+	// 1. 解析JSON字符串为切片（假设原数据是数组格式）
+	var dataList []interface{}
+	if err := json.Unmarshal([]byte(jsonStr), &dataList); err != nil {
+		return nil, err // 解析失败返回错误
 	}
+
+	// 2. 计算总条数
+	total := len(dataList)
+
+	// 3. 调用通用分页工具计算偏移量和分页信息
+	offset, limit, pageInfo := common.Paginate(total, page, size)
+
+	// 4. 截取分页数据（处理边界情况：偏移量超过总条数时返回空数组）
+	var paginatedData []interface{}
+	if offset < total {
+		end := offset + limit
+		if end > total {
+			end = total
+		}
+		paginatedData = dataList[offset:end]
+	} else {
+		paginatedData = []interface{}{}
+	}
+
+	// 5. 组装分页结果（与Python返回格式对齐）
+	return map[string]interface{}{
+		"data":  paginatedData,     // 分页后的数据列表
+		"page":  pageInfo["page"],  // 当前页码
+		"size":  pageInfo["size"],  // 每页条数
+		"total": pageInfo["total"], // 总条数
+	}, nil
 }

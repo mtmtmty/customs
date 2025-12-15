@@ -3,8 +3,11 @@ package handler
 import (
 	"customs/api/response"
 	"customs/service"
+	"fmt"
 	"github.com/gin-gonic/gin"
+	"net/http"
 	"strconv"
+	"strings"
 )
 
 // DataDictionaryHandler 数据字典接口处理器
@@ -17,6 +20,38 @@ func NewDataDictionaryHandler(svc *service.DataDictionaryService) *DataDictionar
 	return &DataDictionaryHandler{svc: svc}
 }
 
+// DownloadTemplate 下载数据字典Excel模板
+// @Summary 下载数据字典Excel模板
+// @Description 获取系统数据字典导入模板（system-db.xls）
+// @Tags 数据字典
+// @Produce application/octet-stream
+// @Success 200 {file} file "模板文件流"
+// @Failure 400 {object} response.Response "获取模板失败"
+// @Router /api/data_dictionary/insert [get]
+func (h *DataDictionaryHandler) DownloadTemplate(c *gin.Context) {
+	// 调用Service获取文件流和文件名
+	fileReader, fileName, err := h.svc.DownloadTemplate(c.Request.Context())
+	if err != nil {
+		response.Fail(c, response.ErrCodeFileError, err.Error())
+		return
+	}
+
+	// 设置下载响应头
+	c.Header("Content-Disposition", fmt.Sprintf("attachment; filename=%q", fileName))
+
+	// 根据文件后缀设置MIME类型
+	var contentType string
+	if strings.HasSuffix(fileName, ".xlsx") {
+		contentType = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+	} else {
+		contentType = "application/vnd.ms-excel"
+	}
+	c.Header("Content-Type", contentType) // 正确设置Content-Type
+
+	// 直接通过流返回文件内容，使用上面定义的contentType变量
+	c.DataFromReader(http.StatusOK, -1, contentType, fileReader, nil)
+}
+
 // UploadExcel 上传Excel
 // @Summary 上传Excel文件并触发解析
 // @Description 上传Excel文件，关联资源备注，生产解析异步任务
@@ -25,7 +60,7 @@ func NewDataDictionaryHandler(svc *service.DataDictionaryService) *DataDictionar
 // @Param resource_comment formData string true "资源备注"
 // @Param file formData file true "Excel文件"
 // @Success 200 {object} response.Response{data=model.DictionaryTask}
-// @Router /api/dict/upload [post]
+// @Router /api/data_dictionary/insert [post]
 func (h *DataDictionaryHandler) UploadExcel(c *gin.Context) {
 	// 步骤1：解析表单参数
 	resourceComment := c.PostForm("resource_comment")
@@ -61,7 +96,7 @@ func (h *DataDictionaryHandler) UploadExcel(c *gin.Context) {
 // @Param page query int false "页码" default(1)
 // @Param size query int false "每页条数" default(10)
 // @Success 200 {object} response.Response
-// @Router /api/dict/result [get]
+// @Router /api/data_dictionary/insert/data [get]
 func (h *DataDictionaryHandler) GetParseResult(c *gin.Context) {
 	// 步骤1：解析查询参数
 	taskID := c.Query("task_id")
@@ -106,10 +141,10 @@ func (h *DataDictionaryHandler) GetParseResult(c *gin.Context) {
 // @Param task_id query string true "字典任务ID"
 // @Param confirm query bool true "是否确认入库"
 // @Success 200 {object} response.Response
-// @Router /api/dict/confirm [post]
+// @Router /api/data_dictionary/insert/{id} [post]
 func (h *DataDictionaryHandler) ConfirmInsert(c *gin.Context) {
 	// 步骤1：解析参数
-	taskID := c.Query("task_id")
+	taskID := c.Param("id")
 	if taskID == "" {
 		response.Fail(c, response.ErrCodeInvalidParam, "任务ID不能为空")
 		return
@@ -132,7 +167,7 @@ func (h *DataDictionaryHandler) ConfirmInsert(c *gin.Context) {
 // @Description 获取去重的资源备注列表
 // @Tags 数据字典
 // @Success 200 {object} response.Response{data=[]string}
-// @Router /api/dict/comments [get]
+// @Router /api/data_dictionary/resource_comment [get]
 func (h *DataDictionaryHandler) GetResourceComments(c *gin.Context) {
 	// 步骤1：调用Service层方法
 	comments, err := h.svc.GetResourceComments(c.Request.Context())
