@@ -123,7 +123,7 @@ func (h *DataDictionaryHandler) GetParseResult(c *gin.Context) {
 		return
 	}
 
-	// 步骤3：调用Service层方法（使用转换后的pageInt和sizeInt）
+	// 步骤3：调用Service层方法
 	result, err := h.svc.GetParseResult(c.Request.Context(), taskID, pageInt, sizeInt)
 	if err != nil {
 		response.Fail(c, response.ErrCodeBusinessError, err.Error())

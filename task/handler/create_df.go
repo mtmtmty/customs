@@ -42,6 +42,7 @@ func CreateDFHandler(
 	}
 
 	// 3. 解析Excel具体逻辑
+	// 3.1 打开Excel文件
 	f, err := excelize.OpenReader(excelFileBytes)
 	if err != nil {
 		dictTask, _ := dictRepo.GetByID(ctx, p.TaskID)
@@ -51,7 +52,7 @@ func CreateDFHandler(
 	}
 	defer f.Close()
 
-	// 3.2 解析Excel数据（示例：读取所有sheet的内容）
+	// 3.2 解析Excel数据
 	parseResult := make(map[string]interface{}) // 存储最终解析结果
 
 	// 遍历所有sheet
@@ -95,7 +96,7 @@ func CreateDFHandler(
 	dataDictionaryCSVName := p.ExcelName + "_dict.csv"
 	csvName := p.ExcelName + "_all.csv"
 
-	// 4. 将解析结果存入Redis（供API查询）
+	// 4. 将解析结果存入Redis
 	redisKey := "dict_task_" + p.TaskID
 	// resultJSON := 解析后的结果序列化
 	resultJSON, err := json.Marshal(parseResult)

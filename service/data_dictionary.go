@@ -1,6 +1,7 @@
 package service
 
 import (
+	"bytes"
 	"context"
 	"customs/common"
 	"customs/common/errno"
@@ -11,9 +12,12 @@ import (
 	"customs/task"
 	"encoding/json"
 	"fmt"
+	"github.com/xuri/excelize/v2"
 	"io"
+	"log"
 	"mime/multipart"
 	"path/filepath"
+	"strings"
 )
 
 // DataDictionaryService 数据字典核心业务服务
@@ -50,7 +54,7 @@ func (s *DataDictionaryService) DownloadTemplate(ctx context.Context) (io.Reader
 	templateName := "system-db.xls" // 模板文件名，与Python原逻辑保持一致
 
 	// 从MinIO下载模板文件
-	fileBytes, err := s.minioClient.DownloadFile("excel-bucket", templateName)
+	fileBytes, err := s.minioClient.DownloadFile("sjdt-update-dictionary-config-excel", templateName)
 	if err != nil {
 		return nil, "", fmt.Errorf("minio下载失败：%w", err)
 	}
@@ -75,21 +79,37 @@ func (s *DataDictionaryService) UploadExcel(
 	// 步骤2：打开文件并上传到MinIO
 	src, err := file.Open()
 	if err != nil {
-		return nil, errno.ErrFileOpenFailed // 自定义错误码：文件打开失败
+		return nil, errno.ErrFileOpenFailed.WithMessage(err.Error())
 	}
-	defer func(src multipart.File) {
-		err := src.Close()
-		if err != nil {
-
+	defer func() {
+		if err := src.Close(); err != nil {
+			// 记录关闭文件失败的日志，不阻断主流程
+			log.Printf("关闭文件失败: %v, 文件名: %s", err, file.Filename)
 		}
-	}(src)
-	// 上传到MinIO的excel-bucket，文件名用原文件名（也可加前缀避免重复）
-	err = s.minioClient.UploadFile("excel-bucket", file.Filename, src, file.Size)
+	}()
+
+	// 读取文件内容用于格式验证（提前发现问题，避免无效上传）
+	content, err := io.ReadAll(src)
+	if err != nil {
+		return nil, errno.ErrFileOpenFailed.WithMessage("读取文件内容失败: " + err.Error())
+	}
+
+	// 步骤3：预验证Excel格式（文件名+内容结构）
+	if err := judgeExcelFormat(file.Filename, content); err != nil {
+		return nil, err
+	}
+
+	// 重置文件指针，确保后续上传完整
+	if _, err := src.Seek(0, io.SeekStart); err != nil {
+		return nil, errno.ErrFileOpenFailed.WithMessage("重置文件指针失败: " + err.Error())
+	}
+	// 上传到MinIO的excel-bucket，文件名用原文件名
+	err = s.minioClient.UploadFile("sjdt-update-dictionary-config-excel", file.Filename, src, file.Size)
 	if err != nil {
 		return nil, errno.ErrMinioUploadFailed // 自定义错误码：MinIO上传失败
 	}
 
-	// 步骤3：生产Asynq解析任务
+	// 步骤4：生产Asynq解析任务
 	dictTask := model.NewDictionaryTask(file.Filename, "") // 先初始化任务记录（无taskID）
 	// 先创建数据库任务记录
 	if err := s.dictRepo.Create(ctx, dictTask); err != nil {
@@ -107,7 +127,7 @@ func (s *DataDictionaryService) UploadExcel(
 		return nil, errno.ErrTaskCreateFailed // 自定义错误码：任务创建失败
 	}
 
-	// 步骤4：更新任务记录的create_df_task_id
+	// 步骤5：更新任务记录的create_df_task_id
 	dictTask.CreateDFTaskID = taskInfo.ID
 	dictTask.UpdateCreateDFStatus(model.TaskStatusPending) // 状态改为待执行
 	if err := s.dictRepo.Update(ctx, dictTask); err != nil {
@@ -125,7 +145,7 @@ func (s *DataDictionaryService) GetParseResult(ctx context.Context, taskID strin
 		return nil, fmt.Errorf("任务不存在：%w", err)
 	}
 
-	// 步骤2：只检查「解析状态是否成功」（关键修改：去掉对confirm的判定）
+	// 步骤2：只检查「解析状态是否成功」
 	if dictTask.CreateDFTaskStatus != model.TaskStatusSucceeded {
 		return nil, fmt.Errorf("任务解析未完成，当前状态：%s", dictTask.CreateDFTaskStatus)
 	}
@@ -232,11 +252,68 @@ func paginateResult(jsonStr string, page, size int) (interface{}, error) {
 		paginatedData = []interface{}{}
 	}
 
-	// 5. 组装分页结果（与Python返回格式对齐）
+	// 5. 组装分页结果
 	return map[string]interface{}{
 		"data":  paginatedData,     // 分页后的数据列表
 		"page":  pageInfo["page"],  // 当前页码
 		"size":  pageInfo["size"],  // 每页条数
 		"total": pageInfo["total"], // 总条数
 	}, nil
+}
+
+// judgeExcelFormat 验证Excel文件名格式和列名是否符合规范
+// 文件名要求："系统名-dbname"（用短横线分割为两部分）
+// 列名要求：必须包含指定的5个标准列
+func judgeExcelFormat(fileName string, fileContent []byte) error {
+	// 1. 验证文件名格式（系统名-dbname）
+	parts := strings.Split(fileName, "-")
+	if len(parts) != 2 {
+		return errno.ErrInvalidFileNameFormat // 自定义错误：文件名格式错误
+	}
+
+	// 2. 验证Excel列名是否包含所有标准列
+	// 打开Excel文件（从字节流读取）
+	f, err := excelize.OpenReader(bytes.NewReader(fileContent))
+	if err != nil {
+		return errno.ErrExcelOpenFailed // 自定义错误：打开Excel失败
+	}
+	defer f.Close()
+
+	// 获取第一个sheet的列名（默认读取第一个sheet）
+	sheetList := f.GetSheetList()
+	if len(sheetList) == 0 {
+		return errno.ErrExcelNoSheet // 自定义错误：Excel无工作表
+	}
+	rows, err := f.GetRows(sheetList[0])
+	if err != nil {
+		return errno.ErrExcelReadFailed // 自定义错误：读取Excel失败
+	}
+	if len(rows) == 0 {
+		return errno.ErrExcelEmpty // 自定义错误：Excel内容为空
+	}
+
+	// 提取第一行作为列名
+	columns := rows[0]
+	columnSet := make(map[string]struct{}, len(columns))
+	for _, col := range columns {
+		columnSet[col] = struct{}{}
+	}
+
+	// 标准列名集合（与Python版本保持一致）
+	stdColumns := map[string]struct{}{
+		"数据表名称（英文）":    {},
+		"数据表名称（中文）":    {},
+		"字段/数据项名称（英文）": {},
+		"字段/数据项名称（中文）": {},
+		"字段/数据项说明":     {},
+	}
+
+	// 检查是否包含所有标准列
+	for col := range stdColumns {
+		if _, exists := columnSet[col]; !exists {
+			return errno.ErrExcelColumnMissing // 自定义错误：缺少必要列
+		}
+	}
+
+	return nil
 }
